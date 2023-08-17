@@ -1,0 +1,165 @@
+#!/bin/bash
+# initial setup for Ubuntu Desktop and Ubuntu live system
+# do initial settings after formatting casper-rw
+
+#############################################
+# setup colors for accounts and nano
+# parameters: setupaccount newuser
+#############################################
+setupaccount() {
+	#############################
+	# setup /root account
+	#############################
+	# root .bashrc edit so directories will be in colour for root and red prompt
+	if test ! -f /root/.bashrc.bak; then
+		cp -f /root/.bashrc /root/.bashrc.bak
+	fi
+	# make the prompt
+	sed -i -e 's/^#force_color_prompt/force_color_prompt/' /root/.bashrc
+	sed -i -e 's/PS1=.*/PS1='\''\${debian_chroot:+(\$debian_chroot)}\\[\\033[01;31m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;36m\\]\\w\\[\\033[00m\\]\\$ '\''/' /root/.bashrc
+	# setup the aliases for colour
+	sed -i -e 's/^# alias l/alias l/' /root/.bashrc
+
+	# setup to use .dircolors
+	sed -i -e 's/^# export LS/export LS/' /root/.bashrc
+	sed -i -e 's/^# eval \"`dircolors`\"/eval \"\$(dircolors -b ~\/.dircolors)\"/' /root/.bashrc
+
+	# set up dircolors for root
+	dircolors --print-database > /root/.dircolors
+	sed -i -e 's/^DIR 01;34/DIR 01;36/' /root/.dircolors
+	sed -i -e 's/^LINK 01;36/LINK 01;33/' /root/.dircolors
+
+	#########################
+	# setup  /home/robert account
+	#########################
+	# copy .dircolors to /home/robert and set ownership
+	cp /root/.dircolors "/home/$1/"
+	chown $1:$1 /home/$1/.dircolors
+
+	# edit .bashrc for pi so directories will be in colour
+	if test ! -f /home/$1/.bashrc.bak; then
+		sudo -u $1 cp /home/$1/.bashrc /home/$1/.bashrc.bak
+	fi
+	# change colour of prompt
+	sudo -u robert sed -i -e 's/^#force_color_prompt/force_color_prompt/' /home/$1/.bashrc
+	sudo -u $1 sed -i -e 's/\[\\033\[01;34m\\\]/\[\\033\[01;36m\\\]/' /home/$1/.bashrc
+
+	# install git credentials
+	sudo -u $1 svn export --force ${SVNURL}/root/my-linux/git/.gitconfig /home/$1/
+	sudo -u $1 svn export --force ${SVNURL}/root/my-linux/git/.git-credentials /home/$1/
+
+	# install rclone config file in /home/robert/.config/rclone/
+	test -d /home/robert/.config/rclone || mkdir -p /home/robert/.config/rclone
+	chown robert:robert /home/robert/.config/rclone
+	sudo -u $1 svn export --force ${SVNURL}/root/my-linux/rclone/rclone.conf /home/$1/.config/rclone
+
+	# export .bash_aliases from subversion
+	sudo -u $1 svn export --force ${SVNURL}/root/my-linux/config-files/bash_aliases/.bash_aliases /home/$1
+
+	# set config file for rclone
+	sudo -u $1 svn export --force ${SVNURL}/root/my-linux/rclone /home/$1/.config/rclone
+
+	# edit subversion config so .git and .gitignore are ignored
+	sed -i -e 's/^# global-ignores =/global-ignores = .git .gitignore/' /etc/subversion/config
+
+	# edit nanorc
+	sed -i -e 's/^# set autoindent/set autoindent/' \
+	       -e 's/^# set linenumbers/set linenumbers/' \
+	       -e 's/^# set smooth/set smooth/' \
+	       -e 's/^# set multibuffer/set multibuffer/' \
+	       -e 's/^# set positionlog/set positionlog/' \
+	       -e 's/^# set selectedcolor .*/set selectedcolor yellow,magenta/' \
+	       -e 's/^# set numbercolor cyan/set numbercolor cyan/' \
+	       -e 's/^# set softwrap/set softwrap/' \
+	       -e 's/^# set keycolor cyan/set keycolor cyan/' /etc/nanorc
+
+	# extract dconf and mate for config and .mozilla directory
+	# -> .config
+	if test -f /mnt/debhome/xconfig/uconfig.tar.xz; then
+		tar --xz -xvf /mnt/debhome/xconfig/uconfig.tar.xz -C /home/$1
+	fi
+
+}
+
+# this script initiliases linux on the live system
+# or desktop
+# It requires subversion
+
+# the subversion link
+LINK="/mnt/svn"
+SVNURL="file://${LINK}"
+
+# check if svn is available
+if test ! -d "${LINK}"; then
+	echo "svn repository not available"
+	exit 1;
+fi
+
+# check if subversion is installed
+dpkg-query -s subversion
+if test $? -ne 0; then
+	# install subversion
+	apt -y install subversion
+	# check it was installed
+	if test $? -ne 0; then
+		echo "Could not install subversion"
+		exit 1
+	fi
+fi
+
+# the systemctl set-default multi-user.target is done by liveinstall.sh
+timedatectl set-timezone Africa/Johannesburg
+timedatectl --adjust-system-clock set-local-rtc 1
+
+# also set the RTC to system time
+hwclock -w
+
+# setup for live user or else for desktop
+HNAME=`hostname`
+if test "${HNAME}" = "live"; then
+	# this is the Ubuntu live system
+	usermod -u 1000 robert
+	groupmod -g 1000 robert
+	chown -R robert:robert /home/robert/
+
+else
+	# this is the desktop
+	# disabel the editfstab service
+	systemctl disable editfstab.service
+
+	# edit default grub to remove
+	# splash quiet. Also the vt_handoff must be removed
+	sed -i -e 's/GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT=\"\"/' /etc/default/grub
+	update-grub
+fi
+
+# set the ownership of all /mnt/ directories
+# robert id must already be 1000
+chown robert:robert /mnt
+chown -h robert:robert /mnt/*
+
+# move mbl data files to /home/robert
+# they only exist if system is live
+# and mountblv has been installed
+if test -f /root/.mbl.rc; then
+	mv -fv .mbl.rc /home/robert
+	chown robert:robert /home/robert/.mbl.rc
+fi
+
+if test -f /root/.mbldata.rc; then
+	mv -fv .mbldata.rc /home/robert
+	chown robert:robert /home/robert/.mbldata.rc
+fi
+# install files sudoers
+svn export --force ${SVNURL}/root/my-linux/sudoers.d/robert /etc/sudoers.d
+# set ownership
+chown root:root /etc/sudoers.d/robert
+chmod 0440 /etc/sudoers.d/robert
+
+# setup account for robert and root
+setupaccount "robert"
+
+# setup alias for root
+echo "#!/bin/bash" > /root/.bash_aliases
+sed -i -e '$a\alias lb='\''lsblk -o PATH,LABEL,FSTYPE,UUID,MOUNTPOINT'\''' /root/.bash_aliases
+chmod 755 /root/.bash_aliases

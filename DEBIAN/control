@@ -1,0 +1,8 @@
+Package: liveinit
+Version: 1.0.1
+Architecture: all
+Maintainer: Robert Key robkey@mighty.co.za
+Depends: subversion, git
+Section: myown
+Priority: optional
+Description: liveinit initialises a live system after the first install
